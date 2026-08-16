@@ -212,40 +212,84 @@ Make the hobby meaningfully influence every idea. Do not give generic ideas. Use
         return JsonResponse({"error": str(error)}, status=502)
 
 
-@require_http_methods(["GET"])
+@csrf_exempt
 def history(request):
     user = identity(request)
-    if not user:
-        return JsonResponse({"error": "Please log in."}, status=401)
-    with db() as connection:
-        rows = connection.execute(
-            "SELECT * FROM project_history WHERE user_id = ? ORDER BY id DESC",
-            (user["id"],),
-        ).fetchall()
-    return JsonResponse({"items": [{**dict(row), "ideas": json.loads(row["ideas_json"])} for row in rows]})
 
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def save_history(request):
-    user = identity(request)
     if not user:
-        return JsonResponse({"error": "Please log in."}, status=401)
-    try:
-        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        payload = {}
-    if not isinstance(payload.get("ideas"), list):
-        return JsonResponse({"error": "No ideas to save."}, status=400)
-    with db() as connection:
-        connection.execute(
-            "INSERT INTO project_history (user_id, topic, interest, level, ideas_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                user["id"], payload.get("topic", "Topic"), payload.get("interest", "Interest"),
-                payload.get("level", "Level"), json.dumps(payload["ideas"]), datetime.now(timezone.utc).isoformat(),
-            ),
+        return JsonResponse(
+            {"error": "Please log in."},
+            status=401
         )
-    return JsonResponse({"saved": True})
+
+    # GET = retrieve history
+    if request.method == "GET":
+        with db() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM project_history
+                WHERE user_id = ?
+                ORDER BY id DESC
+                """,
+                (user["id"],),
+            ).fetchall()
+
+        return JsonResponse({
+            "items": [
+                {
+                    **dict(row),
+                    "ideas": json.loads(row["ideas_json"])
+                }
+                for row in rows
+            ]
+        })
+
+    # POST = save history
+    if request.method == "POST":
+        try:
+            payload = json.loads(
+                request.body.decode("utf-8")
+            ) if request.body else {}
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            payload = {}
+
+        if not isinstance(payload.get("ideas"), list):
+            return JsonResponse(
+                {"error": "No ideas to save."},
+                status=400
+            )
+
+        with db() as connection:
+            connection.execute(
+                """
+                INSERT INTO project_history
+                (
+                    user_id,
+                    topic,
+                    interest,
+                    level,
+                    ideas_json,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user["id"],
+                    payload.get("topic", "Topic"),
+                    payload.get("interest", "Interest"),
+                    payload.get("level", "Level"),
+                    json.dumps(payload["ideas"]),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+        return JsonResponse({"saved": True})
+
+    return JsonResponse(
+        {"error": "Method not allowed."},
+        status=405
+    )
 
 
 @csrf_exempt
@@ -280,7 +324,7 @@ def export_pdf(request):
     buffer = BytesIO()
     document = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=46, bottomMargin=46)
     styles = getSampleStyleSheet()
-    story = [Paragraph("Syllabus2Project — Gemini Project Ideas", styles["Title"]), Spacer(1, 12)]
+    story = [Paragraph("Syllabus Topics To Project Ideas — Gemini Project Ideas", styles["Title"]), Spacer(1, 12)]
     story.append(Paragraph(f"Prepared for: {user['name']}", styles["Normal"]))
     story.append(Paragraph(f"Topic: {payload.get('topic', 'Selected topic')} · Interest: {payload.get('interest', 'Selected interest')} · Level: {payload.get('level', 'Selected level')}", styles["Normal"]))
     story.append(Spacer(1, 16))
